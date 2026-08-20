@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TOULUX STOCK</title>
+  <!-- SheetJS Library for Excel import/export -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; padding: 15px; background: #f8f9fa; margin: 0; }
+    .controls { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .search-bar { width: 100%; margin-bottom: 15px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 15px; box-sizing: border-box; }
+    
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); min-width: 500px; }
+    th, td { padding: 10px; border: 1px solid #ddd; text-align: left; }
+    [dir="rtl"] th, [dir="rtl"] td { text-align: right; }
+    th { background: #007bff; color: white; }
+    input[type="text"] { width: 95%; padding: 6px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; }
+    input[type="checkbox"] { transform: scale(1.3); cursor: pointer; }
+    select.lang-select { padding: 9px 12px; border-radius: 4px; border: 1px solid #007bff; background: #fff; font-weight: bold; cursor: pointer; }
+    
+    .btn { padding: 10px 14px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; font-size: 14px; }
+    .btn-save { background: #007bff; }
+    .btn-add { background: #28a745; }
+    .btn-export { background: #17a2b8; }
+    .btn-notify { background: #ffc107; color: #333; }
+    .btn-clear { background: #6c757d; }
+    .btn-del { background: #dc3545; padding: 6px 10px; }
+    
+    /* Text-Only Toast Banner */
+    #toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; }
+    [dir="rtl"] #toast-container { right: auto; left: 20px; }
+    .toast { background: #333; color: #fff; padding: 12px 20px; border-radius: 6px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); font-size: 14px; display: flex; flex-direction: column; gap: 4px; animation: slideIn 0.3s ease-out; }
+    .toast-title { font-weight: bold; color: #ffc107; }
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    /* History Log Section */
+    .history-section { margin-top: 30px; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .history-list { max-height: 250px; overflow-y: auto; padding-left: 15px; font-family: monospace; font-size: 13px; }
+    [dir="rtl"] .history-list { padding-left: 0; padding-right: 15px; }
+    .history-item { margin-bottom: 6px; color: #333; }
+    .history-date { color: #6c757d; font-weight: bold; margin-right: 8px; }
+    [dir="rtl"] .history-date { margin-right: 0; margin-left: 8px; }
+  </style>
+</head>
+<body>
+
+  <h2 id="appHeader">TOULUX STOCK</h2>
+
+  <div id="toast-container"></div>
+
+  <div class="controls">
+    <select id="langSelect" class="lang-select" onchange="setLanguage(this.value)">
+      <option value="en">English 🇬🇧</option>
+      <option value="fr">Français 🇫🇷</option>
+      <option value="ar">العربية 🇲🇦</option>
+    </select>
+    <input type="file" id="excelFile" accept=".xlsx, .xls" />
+    <button class="btn btn-notify" id="btnNotify" onclick="requestNotificationPermission()">Enable Notifications</button>
+    <button class="btn btn-save" id="btnSave" onclick="saveChanges()">Save Changes</button>
+    <button class="btn btn-add" id="btnAdd" onclick="addNewRow()">+ Add Row</button>
+    <button class="btn btn-export" id="btnExport" onclick="exportExcel()">Export to Excel</button>
+    <button class="btn btn-clear" id="btnClear" onclick="clearData()">Clear All Data</button>
+  </div>
+
+  <input type="text" id="searchInput" class="search-bar" placeholder="Search items by name or price..." onkeyup="filterTable()">
+
+  <div class="table-container">
+    <table id="inventoryTable">
+      <thead>
+        <tr>
+          <th id="thDesc">Description</th>
+          <th id="thPrice">Price</th>
+          <th id="thStock">In Stock</th>
+          <th id="thAction">Action</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="history-section">
+    <h3 id="historyTitle">Activity History Log</h3>
+    <ul id="historyList" class="history-list"></ul>
+  </div>
+
+  <script>
+    // Language Translations Dictionary
+    const translations = {
+      en: {
+        btnNotify: "Enable Notifications",
+        btnSave: "Save Changes",
+        btnAdd: "+ Add Row",
+        btnExport: "Export to Excel",
+        btnClear: "Clear All Data",
+        searchPlaceholder: "Search items by name or price...",
+        thDesc: "Description",
+        thPrice: "Price",
+        thStock: "In Stock",
+        thAction: "Action",
+        btnDelete: "Delete",
+        historyTitle: "Activity History Log",
+        defaultItemName: "New Item Description",
+        inStock: "IN STOCK",
+        outOfStock: "OUT OF STOCK",
+        newItemAdded: "New item added: ",
+        nameChanged: "Name changed: ",
+        priceChanged: "Price changed for ",
+        stockChanged: "Stock status changed for ",
+        removedItems: "Removed item(s)",
+        importedItems: "Imported items from Excel.",
+        savedNotice: "Inventory Saved",
+        noChanges: "No new changes detected.",
+        dataReset: "Inventory and history cleared.",
+        exported: "Exported table data to Excel file."
+      },
+      fr: {
+        btnNotify: "Activer les notifications",
+        btnSave: "Enregistrer",
+        btnAdd: "+ Ajouter une ligne",
+        btnExport: "Exporter vers Excel",
+        btnClear: "Effacer les données",
+        searchPlaceholder: "Rechercher par nom ou prix...",
+        thDesc: "Description",
+        thPrice: "Prix",
+        thStock: "En Stock",
+        thAction: "Action",
+        btnDelete: "Supprimer",
+        historyTitle: "Historique des activités",
+        defaultItemName: "Nouvel article",
+        inStock: "EN STOCK",
+        outOfStock: "RUPTURE DE STOCK",
+        newItemAdded: "Nouvel article ajouté : ",
+        nameChanged: "Nom modifié : ",
+        priceChanged: "Prix modifié pour ",
+        stockChanged: "Statut du stock modifié pour ",
+        removedItems: "Article(s) supprimé(s)",
+        importedItems: "Articles importés depuis Excel.",
+        savedNotice: "Inventaire enregistré",
+        noChanges: "Aucune modification détectée.",
+        dataReset: "Inventaire et historique effacés.",
+        exported: "Données exportées vers un fichier Excel."
+      },
+      ar: {
+        btnNotify: "تفعيل الإشعارات",
+        btnSave: "حفظ التغييرات",
+        btnAdd: "+ إضافة صف",
+        btnExport: "تصدير إلى إكسل",
+        btnClear: "مسح جميع البيانات",
+        searchPlaceholder: "البحث عن العناصر بالاسم أو السعر...",
+        thDesc: "الوصف",
+        thPrice: "السعر",
+        thStock: "متوفر في المخزون",
+        thAction: "الإجراء",
+        btnDelete: "حذف",
+        historyTitle: "سجل النشاط",
+        defaultItemName: "وصف عنصر جديد",
+        inStock: "متوفر",
+        outOfStock: "غير متوفر",
+        newItemAdded: "تمت إضافة عنصر جديد: ",
+        nameChanged: "تم تغيير الاسم: ",
+        priceChanged: "تم تغيير السعر لـ ",
+        stockChanged: "تم تغيير حالة المخزون لـ ",
+        removedItems: "تم إزالة عناصر",
+        importedItems: "تم استيراد العناصر من إكسل.",
+        savedNotice: "تم حفظ المخزون",
+        noChanges: "لم يتم التوصل بأي تغييرات جديدة.",
+        dataReset: "تم مسح المخزون والسجل بالكامل.",
+        exported: "تم تصدير البيانات إلى ملف إكسل."
+      }
+    };
+
+    let currentLang = 'en';
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js')
+        .then(() => console.log('Service Worker Registered'))
+        .catch(err => console.log('Service Worker Failed:', err));
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const savedLang = localStorage.getItem('touluxLang') || 'en';
+      setLanguage(savedLang);
+      loadFromLocalStorage();
+      loadHistory();
+    });
+
+    function setLanguage(lang) {
+      currentLang = lang;
+      localStorage.setItem('touluxLang', lang);
+      document.getElementById('langSelect').value = lang;
+
+      // Toggle Text Direction for Arabic
+      document.documentElement.dir = (lang === 'ar') ? 'rtl' : 'ltr';
+
+      // Update UI elements
+      const t = translations[lang];
+      document.getElementById('btnNotify').innerText = t.btnNotify;
+      document.getElementById('btnSave').innerText = t.btnSave;
+      document.getElementById('btnAdd').innerText = t.btnAdd;
+      document.getElementById('btnExport').innerText = t.btnExport;
+      document.getElementById('btnClear').innerText = t.btnClear;
+      document.getElementById('searchInput').placeholder = t.searchPlaceholder;
+      document.getElementById('thDesc').innerText = t.thDesc;
+      document.getElementById('thPrice').innerText = t.thPrice;
+      document.getElementById('thStock').innerText = t.thStock;
+      document.getElementById('thAction').innerText = t.thAction;
+      document.getElementById('historyTitle').innerText = t.historyTitle;
+
+      // Update existing delete button labels
+      document.querySelectorAll('.btn-del').forEach(btn => {
+        btn.innerText = t.btnDelete;
+      });
+    }
+
+    function requestNotificationPermission() {
+      if ('Notification' in window) {
+        Notification.requestPermission().then(permission => {
+          if (permission === 'granted') {
+            sendNotification('TOULUX STOCK', 'Notifications Active');
+          } else {
+            alert('Notifications blocked in browser settings.');
+          }
+        });
+      } else {
+        showToast('TOULUX STOCK', 'On-screen text alerts active.');
+      }
+    }
+
+    function sendNotification(title, bodyText) {
+      showToast(title, bodyText);
+
+      if ('Notification' in window && Notification.permission === 'granted') {
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.ready.then(registration => {
+            registration.showNotification(title, { body: bodyText });
+          });
+        } else {
+          new Notification(title, { body: bodyText });
+        }
+      }
+    }
+
+    function showToast(title, message) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.innerHTML = `<span class="toast-title">${title}</span><span>${message}</span>`;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.remove();
+      }, 4000);
+    }
+
+    document.getElementById('excelFile').addEventListener('change', handleFile);
+
+    function handleFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+        
+        document.getElementById('tableBody').innerHTML = '';
+        rows.forEach(row => {
+          const name = row['Description'] || '';
+          const price = row['Price'] !== undefined ? String(row['Price']) : '0,00';
+          const stock = String(row['In Stock']).trim().toUpperCase() === 'TRUE' || row['In Stock'] === true;
+          createRow(name, price, stock);
+        });
+        
+        addHistoryLog(`${rows.length} ${translations[currentLang].importedItems}`);
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function createRow(name = '', price = '0,00', inStock = true) {
+      const tbody = document.getElementById('tableBody');
+      const tr = document.createElement('tr');
+      const t = translations[currentLang];
+
+      tr.innerHTML = `
+        <td><input type="text" value="${name}" class="item-name"></td>
+        <td><input type="text" value="${price}" class="item-price"></td>
+        <td style="text-align: center;">
+          <input type="checkbox" ${inStock ? 'checked' : ''}>
+        </td>
+        <td><button class="btn btn-del" onclick="this.closest('tr').remove()">${t.btnDelete}</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    function addNewRow() {
+      createRow(translations[currentLang].defaultItemName, '0,00', true);
+    }
+
+    function saveChanges() {
+      const savedData = JSON.parse(localStorage.getItem('transporterInventory')) || [];
+      const currentRows = document.querySelectorAll('#tableBody tr');
+      const newInventory = [];
+      let changesDetected = [];
+      const t = translations[currentLang];
+
+      currentRows.forEach((row, index) => {
+        const name = row.querySelector('.item-name').value;
+        const price = row.querySelector('.item-price').value;
+        const inStock = row.querySelector('input[type="checkbox"]').checked;
+
+        newInventory.push({ 'Description': name, 'Price': price, 'In Stock': inStock });
+
+        const oldItem = savedData[index];
+        if (!oldItem) {
+          changesDetected.push(`${t.newItemAdded} "${name}"`);
+        } else {
+          if (oldItem.Description !== name) {
+            changesDetected.push(`${t.nameChanged} "${oldItem.Description}" ➔ "${name}"`);
+          }
+          if (oldItem.Price !== price) {
+            changesDetected.push(`${t.priceChanged} "${name}": ${oldItem.Price} ➔ ${price}`);
+          }
+          if (oldItem['In Stock'] !== inStock) {
+            const status = inStock ? t.inStock : t.outOfStock;
+            changesDetected.push(`${t.stockChanged} "${name}": ${status}`);
+          }
+        }
+      });
+
+      if (savedData.length > currentRows.length) {
+        changesDetected.push(`${savedData.length - currentRows.length} ${t.removedItems}`);
+      }
+
+      localStorage.setItem('transporterInventory', JSON.stringify(newInventory));
+
+      if (changesDetected.length > 0) {
+        changesDetected.forEach(change => {
+          addHistoryLog(change);
+          sendNotification(t.savedNotice, change);
+        });
+      } else {
+        showToast('TOULUX STOCK', t.noChanges);
+      }
+    }
+
+    function addHistoryLog(message) {
+      const historyData = JSON.parse(localStorage.getItem('transporterHistory')) || [];
+      const timestamp = new Date().toLocaleString();
+
+      const logEntry = { date: timestamp, text: message };
+      historyData.unshift(logEntry);
+
+      localStorage.setItem('transporterHistory', JSON.stringify(historyData));
+      renderHistoryItem(logEntry);
+    }
+
+    function renderHistoryItem(entry) {
+      const historyList = document.getElementById('historyList');
+      const li = document.createElement('li');
+      li.className = 'history-item';
+      li.innerHTML = `<span class="history-date">[${entry.date}]</span> ${entry.text}`;
+      historyList.prepend(li);
+    }
+
+    function loadFromLocalStorage() {
+      const savedData = localStorage.getItem('transporterInventory');
+      if (savedData) {
+        const inventory = JSON.parse(savedData);
+        document.getElementById('tableBody').innerHTML = '';
+        inventory.forEach(item => {
+          createRow(item.Description, item.Price, item['In Stock']);
+        });
+      }
+    }
+
+    function loadHistory() {
+      const historyData = JSON.parse(localStorage.getItem('transporterHistory')) || [];
+      const historyList = document.getElementById('historyList');
+      historyList.innerHTML = '';
+      historyData.reverse().forEach(entry => {
+        renderHistoryItem(entry);
+      });
+    }
+
+    function clearData() {
+      if (confirm('Clear all stored inventory data and history?')) {
+        localStorage.removeItem('transporterInventory');
+        localStorage.removeItem('transporterHistory');
+        document.getElementById('tableBody').innerHTML = '';
+        document.getElementById('historyList').innerHTML = '';
+        sendNotification('TOULUX STOCK', translations[currentLang].dataReset);
+      }
+    }
+
+    function filterTable() {
+      const filter = document.getElementById('searchInput').value.toLowerCase();
+      const rows = document.querySelectorAll('#tableBody tr');
+
+      rows.forEach(row => {
+        const name = row.querySelector('.item-name').value.toLowerCase();
+        const price = row.querySelector('.item-price').value.toLowerCase();
+        row.style.display = (name.includes(filter) || price.includes(filter)) ? '' : 'none';
+      });
+    }
+
+    function exportExcel() {
+      const rows = document.querySelectorAll('#tableBody tr');
+      const exportData = [];
+
+      rows.forEach(row => {
+        const description = row.querySelector('.item-name').value;
+        const price = row.querySelector('.item-price').value;
+        const inStock = row.querySelector('input[type="checkbox"]').checked;
+        exportData.push({ 'Description': description, 'Price': price, 'In Stock': inStock });
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Inventory");
+
+      XLSX.writeFile(workbook, 'TOULUX_STOCK_Export.xlsx');
+      addHistoryLog(translations[currentLang].exported);
+    }
+  </script>
+</body>
+</html>
