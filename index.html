@@ -6,6 +6,12 @@
   <title>TOULUX STOCK</title>
   <!-- SheetJS Library for Excel import/export -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"></script>
+
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; padding: 15px; background: #f8f9fa; margin: 0; }
     .controls { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
@@ -28,14 +34,16 @@
     .btn-clear { background: #6c757d; }
     .btn-del { background: #dc3545; padding: 6px 10px; }
     
-    /* Text-Only Toast Banner */
     #toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; }
     [dir="rtl"] #toast-container { right: auto; left: 20px; }
     .toast { background: #333; color: #fff; padding: 12px 20px; border-radius: 6px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); font-size: 14px; display: flex; flex-direction: column; gap: 4px; animation: slideIn 0.3s ease-out; }
     .toast-title { font-weight: bold; color: #ffc107; }
     @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
-    /* History Log Section */
+    .sync-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: bold; padding: 6px 12px; border-radius: 20px; background: #e9ecef; color: #495057; }
+    .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #6c757d; }
+    .sync-dot.online { background: #28a745; }
+
     .history-section { margin-top: 30px; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     .history-list { max-height: 250px; overflow-y: auto; padding-left: 15px; font-family: monospace; font-size: 13px; }
     [dir="rtl"] .history-list { padding-left: 0; padding-right: 15px; }
@@ -46,7 +54,13 @@
 </head>
 <body>
 
-  <h2 id="appHeader">TOULUX STOCK</h2>
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+    <h2>TOULUX STOCK</h2>
+    <div class="sync-status">
+      <span class="sync-dot" id="syncDot"></span>
+      <span id="syncText">Offline Mode</span>
+    </div>
+  </div>
 
   <div id="toast-container"></div>
 
@@ -86,7 +100,24 @@
   </div>
 
   <script>
-    // Language Translations Dictionary
+    const firebaseConfig = {
+      apiKey: "AIzaSyDttHY9ePNphTiEexKNG15qWAq4v6IXvds",
+      authDomain: "toulux-8bdc3.firebaseapp.com",
+      databaseURL: "https://toulux-8bdc3-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "toulux-8bdc3",
+      storageBucket: "toulux-8bdc3.firebasestorage.app",
+      messagingSenderId: "1092303276073",
+      appId: "1:1092303276073:web:4ce574f37422f2dddcb438",
+      measurementId: "G-2V81J63WJJ"
+    };
+
+    const VAPID_KEY = "BBqLYA73XuEiN2KDWXnXH4ZPB5jFTK-QYZX6vTz2iKBq6dHkSIKVck8KCMPI6jzvrwOUmIQQnm81CCTZZN0ClFk";
+
+    let db = null;
+    let messaging = null;
+    let isFirebaseReady = false;
+    let currentToken = null;
+
     const translations = {
       en: {
         btnNotify: "Enable Notifications",
@@ -113,7 +144,8 @@
         savedNotice: "Inventory Saved",
         noChanges: "No new changes detected.",
         dataReset: "Inventory and history cleared.",
-        exported: "Exported table data to Excel file."
+        exported: "Exported table data to Excel file.",
+        syncNotice: "Inventory updated live from cloud."
       },
       fr: {
         btnNotify: "Activer les notifications",
@@ -140,7 +172,8 @@
         savedNotice: "Inventaire enregistré",
         noChanges: "Aucune modification détectée.",
         dataReset: "Inventaire et historique effacés.",
-        exported: "Données exportées vers un fichier Excel."
+        exported: "Données exportées vers un fichier Excel.",
+        syncNotice: "Inventaire mis à jour en direct du cloud."
       },
       ar: {
         btnNotify: "تفعيل الإشعارات",
@@ -167,16 +200,32 @@
         savedNotice: "تم حفظ المخزون",
         noChanges: "لم يتم التوصل بأي تغييرات جديدة.",
         dataReset: "تم مسح المخزون والسجل بالكامل.",
-        exported: "تم تصدير البيانات إلى ملف إكسل."
+        exported: "تم تصدير البيانات إلى ملف إكسل.",
+        syncNotice: "تم تحديث المخزون مباشرة من السحابة."
       }
     };
 
     let currentLang = 'en';
 
+    try {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+      db.enablePersistence({ synchronizeTabs: true }).catch(err => console.warn("Offline storage warning:", err.code));
+
+      if (firebase.messaging.isSupported()) {
+        messaging = firebase.messaging();
+      }
+      isFirebaseReady = true;
+    } catch (e) {
+      console.error("Firebase Init Error:", e);
+    }
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js')
-        .then(() => console.log('Service Worker Registered'))
-        .catch(err => console.log('Service Worker Failed:', err));
+        .then((reg) => {
+          if (messaging) messaging.useServiceWorker(reg);
+        })
+        .catch(err => console.error('SW Error:', err));
     }
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -184,17 +233,32 @@
       setLanguage(savedLang);
       loadFromLocalStorage();
       loadHistory();
+
+      if (isFirebaseReady && db) {
+        updateSyncStatus(true, "Cloud Synced");
+        setupFirestoreRealtimeSync();
+        setupForegroundNotificationHandler();
+      }
     });
+
+    function updateSyncStatus(online, text) {
+      const dot = document.getElementById('syncDot');
+      const label = document.getElementById('syncText');
+      if (online) {
+        dot.classList.add('online');
+        label.innerText = text || 'Cloud Synced';
+      } else {
+        dot.classList.remove('online');
+        label.innerText = 'Offline Mode';
+      }
+    }
 
     function setLanguage(lang) {
       currentLang = lang;
       localStorage.setItem('touluxLang', lang);
       document.getElementById('langSelect').value = lang;
-
-      // Toggle Text Direction for Arabic
       document.documentElement.dir = (lang === 'ar') ? 'rtl' : 'ltr';
 
-      // Update UI elements
       const t = translations[lang];
       document.getElementById('btnNotify').innerText = t.btnNotify;
       document.getElementById('btnSave').innerText = t.btnSave;
@@ -208,23 +272,51 @@
       document.getElementById('thAction').innerText = t.thAction;
       document.getElementById('historyTitle').innerText = t.historyTitle;
 
-      // Update existing delete button labels
-      document.querySelectorAll('.btn-del').forEach(btn => {
-        btn.innerText = t.btnDelete;
-      });
+      document.querySelectorAll('.btn-del').forEach(btn => btn.innerText = t.btnDelete);
+
+      if (currentToken && isFirebaseReady && db) {
+        db.collection("push_tokens").doc(currentToken).update({
+          lang: lang,
+          updatedAt: new Date().toISOString()
+        }).catch(err => console.log("Language sync error:", err));
+      }
     }
 
-    function requestNotificationPermission() {
-      if ('Notification' in window) {
-        Notification.requestPermission().then(permission => {
-          if (permission === 'granted') {
-            sendNotification('TOULUX STOCK', 'Notifications Active');
-          } else {
-            alert('Notifications blocked in browser settings.');
+    async function requestNotificationPermission() {
+      if (!('Notification' in window)) {
+        showToast('TOULUX STOCK', 'Browser does not support notifications.');
+        return;
+      }
+
+      try {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+          showToast('TOULUX STOCK', 'Notifications Active!');
+          
+          if (messaging && isFirebaseReady) {
+            currentToken = await messaging.getToken({ vapidKey: VAPID_KEY });
+            if (currentToken) {
+              await db.collection("push_tokens").doc(currentToken).set({
+                token: currentToken,
+                lang: currentLang,
+                registeredAt: new Date().toISOString(),
+                userAgent: navigator.userAgent
+              }, { merge: true });
+            }
           }
+        }
+      } catch (err) {
+        console.error('Notification error:', err);
+      }
+    }
+
+    function setupForegroundNotificationHandler() {
+      if (messaging) {
+        messaging.onMessage((payload) => {
+          const title = payload.notification?.title || 'TOULUX STOCK';
+          const body = payload.notification?.body || 'Inventory changes updated in real-time.';
+          sendNotification(title, body);
         });
-      } else {
-        showToast('TOULUX STOCK', 'On-screen text alerts active.');
       }
     }
 
@@ -234,7 +326,10 @@
       if ('Notification' in window && Notification.permission === 'granted') {
         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
           navigator.serviceWorker.ready.then(registration => {
-            registration.showNotification(title, { body: bodyText });
+            registration.showNotification(title, { 
+              body: bodyText,
+              icon: 'https://cdn-icons-png.flaticon.com/512/3081/3081559.png'
+            });
           });
         } else {
           new Notification(title, { body: bodyText });
@@ -248,15 +343,10 @@
       toast.className = 'toast';
       toast.innerHTML = `<span class="toast-title">${title}</span><span>${message}</span>`;
       container.appendChild(toast);
-
-      setTimeout(() => {
-        toast.remove();
-      }, 4000);
+      setTimeout(() => toast.remove(), 4000);
     }
 
-    document.getElementById('excelFile').addEventListener('change', handleFile);
-
-    function handleFile(e) {
+    document.getElementById('excelFile').addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
@@ -276,7 +366,7 @@
         addHistoryLog(`${rows.length} ${translations[currentLang].importedItems}`);
       };
       reader.readAsArrayBuffer(file);
-    }
+    });
 
     function createRow(name = '', price = '0,00', inStock = true) {
       const tbody = document.getElementById('tableBody');
@@ -335,6 +425,15 @@
 
       localStorage.setItem('transporterInventory', JSON.stringify(newInventory));
 
+      if (isFirebaseReady && db) {
+        db.collection("inventory").doc("latest").set({
+          items: newInventory,
+          lastUpdated: new Date().toISOString(),
+          lastChanges: changesDetected,
+          lang: currentLang
+        }).catch(err => console.error("Firestore sync error:", err));
+      }
+
       if (changesDetected.length > 0) {
         changesDetected.forEach(change => {
           addHistoryLog(change);
@@ -345,15 +444,41 @@
       }
     }
 
+    function setupFirestoreRealtimeSync() {
+      db.collection("inventory").doc("latest").onSnapshot((doc) => {
+        if (doc.exists) {
+          const data = doc.data();
+          if (data && data.items) {
+            const localData = localStorage.getItem('transporterInventory');
+            const stringifiedCloud = JSON.stringify(data.items);
+
+            if (localData !== stringifiedCloud) {
+              localStorage.setItem('transporterInventory', stringifiedCloud);
+              document.getElementById('tableBody').innerHTML = '';
+              data.items.forEach(item => createRow(item.Description, item.Price, item['In Stock']));
+              showToast('TOULUX STOCK', translations[currentLang].syncNotice);
+            }
+          }
+        }
+      });
+    }
+
     function addHistoryLog(message) {
       const historyData = JSON.parse(localStorage.getItem('transporterHistory')) || [];
       const timestamp = new Date().toLocaleString();
-
       const logEntry = { date: timestamp, text: message };
       historyData.unshift(logEntry);
 
       localStorage.setItem('transporterHistory', JSON.stringify(historyData));
       renderHistoryItem(logEntry);
+
+      if (isFirebaseReady && db) {
+        db.collection("history").add({
+          date: timestamp,
+          text: message,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
     }
 
     function renderHistoryItem(entry) {
@@ -369,9 +494,7 @@
       if (savedData) {
         const inventory = JSON.parse(savedData);
         document.getElementById('tableBody').innerHTML = '';
-        inventory.forEach(item => {
-          createRow(item.Description, item.Price, item['In Stock']);
-        });
+        inventory.forEach(item => createRow(item.Description, item.Price, item['In Stock']));
       }
     }
 
@@ -379,9 +502,7 @@
       const historyData = JSON.parse(localStorage.getItem('transporterHistory')) || [];
       const historyList = document.getElementById('historyList');
       historyList.innerHTML = '';
-      historyData.reverse().forEach(entry => {
-        renderHistoryItem(entry);
-      });
+      historyData.reverse().forEach(entry => renderHistoryItem(entry));
     }
 
     function clearData() {
@@ -390,6 +511,11 @@
         localStorage.removeItem('transporterHistory');
         document.getElementById('tableBody').innerHTML = '';
         document.getElementById('historyList').innerHTML = '';
+        
+        if (isFirebaseReady && db) {
+          db.collection("inventory").doc("latest").delete();
+        }
+        
         sendNotification('TOULUX STOCK', translations[currentLang].dataReset);
       }
     }
@@ -410,10 +536,11 @@
       const exportData = [];
 
       rows.forEach(row => {
-        const description = row.querySelector('.item-name').value;
-        const price = row.querySelector('.item-price').value;
-        const inStock = row.querySelector('input[type="checkbox"]').checked;
-        exportData.push({ 'Description': description, 'Price': price, 'In Stock': inStock });
+        exportData.push({ 
+          'Description': row.querySelector('.item-name').value, 
+          'Price': row.querySelector('.item-price').value, 
+          'In Stock': row.querySelector('input[type="checkbox"]').checked 
+        });
       });
 
       const worksheet = XLSX.utils.json_to_sheet(exportData);
