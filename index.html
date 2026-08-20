@@ -9,6 +9,7 @@
   
   <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"></script>
 
@@ -23,6 +24,7 @@
     [dir="rtl"] th, [dir="rtl"] td { text-align: right; }
     th { background: #007bff; color: white; }
     input[type="text"] { width: 95%; padding: 6px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; }
+    input[type="text"]:disabled, input[type="checkbox"]:disabled { background-color: #f1f1f1; cursor: not-allowed; }
     input[type="checkbox"] { transform: scale(1.3); cursor: pointer; }
     select.lang-select { padding: 9px 12px; border-radius: 4px; border: 1px solid #007bff; background: #fff; font-weight: bold; cursor: pointer; }
     
@@ -32,7 +34,9 @@
     .btn-export { background: #17a2b8; }
     .btn-notify { background: #ffc107; color: #333; }
     .btn-clear { background: #6c757d; }
+    .btn-admin { background: #343a40; }
     .btn-del { background: #dc3545; padding: 6px 10px; }
+    .admin-only { display: none !important; }
     
     #toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; }
     [dir="rtl"] #toast-container { right: auto; left: 20px; }
@@ -70,12 +74,14 @@
       <option value="fr">Français 🇫🇷</option>
       <option value="ar">العربية 🇲🇦</option>
     </select>
-    <input type="file" id="excelFile" accept=".xlsx, .xls" />
+    
+    <button class="btn btn-admin" id="btnAdminAuth" onclick="toggleAdminAuth()">Admin Login</button>
+    <input type="file" id="excelFile" class="admin-only" accept=".xlsx, .xls" />
     <button class="btn btn-notify" id="btnNotify" onclick="requestNotificationPermission()">Enable Notifications</button>
-    <button class="btn btn-save" id="btnSave" onclick="saveChanges()">Save Changes</button>
-    <button class="btn btn-add" id="btnAdd" onclick="addNewRow()">+ Add Row</button>
+    <button class="btn btn-save admin-only" id="btnSave" onclick="saveChanges()">Save Changes</button>
+    <button class="btn btn-add admin-only" id="btnAdd" onclick="addNewRow()">+ Add Row</button>
     <button class="btn btn-export" id="btnExport" onclick="exportExcel()">Export to Excel</button>
-    <button class="btn btn-clear" id="btnClear" onclick="clearData()">Clear All Data</button>
+    <button class="btn btn-clear admin-only" id="btnClear" onclick="clearData()">Clear All Data</button>
   </div>
 
   <input type="text" id="searchInput" class="search-bar" placeholder="Search items by name or price..." onkeyup="filterTable()">
@@ -87,7 +93,7 @@
           <th id="thDesc">Description</th>
           <th id="thPrice">Price</th>
           <th id="thStock">In Stock</th>
-          <th id="thAction">Action</th>
+          <th id="thAction" class="admin-only">Action</th>
         </tr>
       </thead>
       <tbody id="tableBody"></tbody>
@@ -113,10 +119,15 @@
 
     const VAPID_KEY = "BBqLYA73XuEiN2KDWXnXH4ZPB5jFTK-QYZX6vTz2iKBq6dHkSIKVck8KCMPI6jzvrwOUmIQQnm81CCTZZN0ClFk";
 
+    // PASTE YOUR ADMIN USER UID HERE
+    const ADMIN_UID = "PASTE_YOUR_ADMIN_UID_HERE";
+
     let db = null;
+    let auth = null;
     let messaging = null;
     let isFirebaseReady = false;
     let currentToken = null;
+    let isAdminLoggedIn = false;
 
     const translations = {
       en: {
@@ -210,6 +221,7 @@
     try {
       firebase.initializeApp(firebaseConfig);
       db = firebase.firestore();
+      auth = firebase.auth();
       db.enablePersistence({ synchronizeTabs: true }).catch(err => console.warn("Offline storage warning:", err.code));
 
       if (firebase.messaging.isSupported()) {
@@ -234,12 +246,67 @@
       loadFromLocalStorage();
       loadHistory();
 
-      if (isFirebaseReady && db) {
-        updateSyncStatus(true, "Cloud Synced");
-        setupFirestoreRealtimeSync();
-        setupForegroundNotificationHandler();
+      if (isFirebaseReady) {
+        setupAuthListener();
+        if (db) {
+          updateSyncStatus(true, "Cloud Synced");
+          setupFirestoreRealtimeSync();
+          setupForegroundNotificationHandler();
+        }
       }
     });
+
+    function setupAuthListener() {
+      auth.onAuthStateChanged((user) => {
+        const adminBtn = document.getElementById('btnAdminAuth');
+        if (user && (user.uid === ADMIN_UID || ADMIN_UID === "PASTE_YOUR_ADMIN_UID_HERE")) {
+          isAdminLoggedIn = true;
+          adminBtn.innerText = "Admin Logout";
+          adminBtn.style.background = "#dc3545";
+          applyAdminPrivileges(true);
+        } else {
+          isAdminLoggedIn = false;
+          adminBtn.innerText = "Admin Login";
+          adminBtn.style.background = "#343a40";
+          applyAdminPrivileges(false);
+        }
+      });
+    }
+
+    async function toggleAdminAuth() {
+      if (isAdminLoggedIn) {
+        await auth.signOut();
+        showToast('TOULUX STOCK', 'Logged out of Admin mode.');
+      } else {
+        const email = prompt("Enter Admin Email:");
+        if (!email) return;
+        const password = prompt("Enter Admin Password:");
+        if (!password) return;
+
+        try {
+          await auth.signInWithEmailAndPassword(email, password);
+          showToast('TOULUX STOCK', 'Authenticated as Admin!');
+        } catch (err) {
+          alert("Authentication failed: " + err.message);
+        }
+      }
+    }
+
+    function applyAdminPrivileges(isAdmin) {
+      const adminElements = document.querySelectorAll('.admin-only');
+      adminElements.forEach(el => {
+        if (isAdmin) {
+          el.classList.remove('admin-only');
+        } else {
+          el.classList.add('admin-only');
+        }
+      });
+
+      const inputs = document.querySelectorAll('#tableBody input');
+      inputs.forEach(input => {
+        input.disabled = !isAdmin;
+      });
+    }
 
     function updateSyncStatus(online, text) {
       const dot = document.getElementById('syncDot');
@@ -347,6 +414,7 @@
     }
 
     document.getElementById('excelFile').addEventListener('change', (e) => {
+      if (!isAdminLoggedIn) return;
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
@@ -372,23 +440,31 @@
       const tbody = document.getElementById('tableBody');
       const tr = document.createElement('tr');
       const t = translations[currentLang];
+      const disabledAttr = isAdminLoggedIn ? '' : 'disabled';
+      const actionClass = isAdminLoggedIn ? '' : 'admin-only';
 
       tr.innerHTML = `
-        <td><input type="text" value="${name}" class="item-name"></td>
-        <td><input type="text" value="${price}" class="item-price"></td>
+        <td><input type="text" value="${name}" class="item-name" ${disabledAttr}></td>
+        <td><input type="text" value="${price}" class="item-price" ${disabledAttr}></td>
         <td style="text-align: center;">
-          <input type="checkbox" ${inStock ? 'checked' : ''}>
+          <input type="checkbox" ${inStock ? 'checked' : ''} ${disabledAttr}>
         </td>
-        <td><button class="btn btn-del" onclick="this.closest('tr').remove()">${t.btnDelete}</button></td>
+        <td class="${actionClass}"><button class="btn btn-del" onclick="this.closest('tr').remove()">${t.btnDelete}</button></td>
       `;
       tbody.appendChild(tr);
     }
 
     function addNewRow() {
+      if (!isAdminLoggedIn) return;
       createRow(translations[currentLang].defaultItemName, '0,00', true);
     }
 
     function saveChanges() {
+      if (!isAdminLoggedIn) {
+        alert("Action unauthorized. Log in as admin.");
+        return;
+      }
+
       const savedData = JSON.parse(localStorage.getItem('transporterInventory')) || [];
       const currentRows = document.querySelectorAll('#tableBody tr');
       const newInventory = [];
@@ -431,7 +507,7 @@
           lastUpdated: new Date().toISOString(),
           lastChanges: changesDetected,
           lang: currentLang
-        }).catch(err => console.error("Firestore sync error:", err));
+        }).catch(err => alert("Firestore Write Error: " + err.message));
       }
 
       if (changesDetected.length > 0) {
@@ -472,7 +548,7 @@
       localStorage.setItem('transporterHistory', JSON.stringify(historyData));
       renderHistoryItem(logEntry);
 
-      if (isFirebaseReady && db) {
+      if (isFirebaseReady && db && isAdminLoggedIn) {
         db.collection("history").add({
           date: timestamp,
           text: message,
@@ -506,6 +582,7 @@
     }
 
     function clearData() {
+      if (!isAdminLoggedIn) return;
       if (confirm('Clear all stored inventory data and history?')) {
         localStorage.removeItem('transporterInventory');
         localStorage.removeItem('transporterHistory');
